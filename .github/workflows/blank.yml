@@ -1,4 +1,4 @@
-name: Torrent → Magnet Release
+name: Torrent to Magnet Release
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies
@@ -20,11 +20,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-libtorrent
 
-      - name: Convert torrents
+      - name: Convert torrents to magnets
         run: |
           mkdir -p output
-
-          python3 << 'PY'
+          python3 << 'EOF'
 import libtorrent as lt
 import os, json, urllib.parse
 
@@ -32,30 +31,26 @@ torrent_files = []
 for root, dirs, files in os.walk("."):
     for f in files:
         if f.endswith(".torrent"):
-            torrent_files.append(os.path.join(root,f))
+            torrent_files.append(os.path.join(root, f))
 
 all_data = []
 
 for path in torrent_files:
     info = lt.torrent_info(path)
-
     infohash = str(info.info_hash())
     name = info.name()
-
     trackers = [t.url for t in info.trackers()]
 
-    # build magnet with all trackers
     magnet = "magnet:?xt=urn:btih:" + infohash
     magnet += "&dn=" + urllib.parse.quote(name)
 
     for tr in trackers:
         magnet += "&tr=" + urllib.parse.quote(tr)
 
-    files = []
     storage = info.files()
-
+    files_list = []
     for i in range(storage.num_files()):
-        files.append({
+        files_list.append({
             "path": storage.file_path(i),
             "size": storage.file_size(i)
         })
@@ -68,22 +63,21 @@ for path in torrent_files:
         "num_files": storage.num_files(),
         "trackers": trackers,
         "magnet_link": magnet,
-        "files": files
+        "files": files_list
     }
 
     all_data.append(data)
 
-    out_file = "output/magnet_" + os.path.basename(path) + ".json"
-    with open(out_file,"w") as f:
-        json.dump(data,f,indent=2)
+    out_name = "output/magnet_" + os.path.basename(path) + ".json"
+    with open(out_name, "w") as f:
+        json.dump(data, f, indent=2)
 
-# combined index if multiple torrents
 if len(all_data) > 1:
-    with open("output/index.json","w") as f:
-        json.dump(all_data,f,indent=2)
+    with open("output/index.json", "w") as f:
+        json.dump(all_data, f, indent=2)
 
-print("Processed",len(all_data),"torrents")
-PY
+print("Processed", len(all_data), "torrents")
+EOF
 
       - name: Create release tag
         id: tag

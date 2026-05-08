@@ -16,73 +16,77 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-libtorrent
+
+      - name: Create converter script
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-libtorrent
+          cat > convert.py << 'PY'
+          import libtorrent as lt
+          import os, json, urllib.parse
 
-      - name: Convert torrents to magnets
-        run: |
-          mkdir -p output
-          python3 << 'EOF'
-import libtorrent as lt
-import os, json, urllib.parse
+          os.makedirs("output", exist_ok=True)
 
-torrent_files = []
-for root, dirs, files in os.walk("."):
-    for f in files:
-        if f.endswith(".torrent"):
-            torrent_files.append(os.path.join(root, f))
+          torrent_files = []
+          for root, dirs, files in os.walk("."):
+              for f in files:
+                  if f.endswith(".torrent"):
+                      torrent_files.append(os.path.join(root, f))
 
-all_data = []
+          all_data = []
 
-for path in torrent_files:
-    info = lt.torrent_info(path)
-    infohash = str(info.info_hash())
-    name = info.name()
-    trackers = [t.url for t in info.trackers()]
+          for path in torrent_files:
+              info = lt.torrent_info(path)
+              infohash = str(info.info_hash())
+              name = info.name()
 
-    magnet = "magnet:?xt=urn:btih:" + infohash
-    magnet += "&dn=" + urllib.parse.quote(name)
+              trackers = [t.url for t in info.trackers()]
 
-    for tr in trackers:
-        magnet += "&tr=" + urllib.parse.quote(tr)
+              magnet = "magnet:?xt=urn:btih:" + infohash
+              magnet += "&dn=" + urllib.parse.quote(name)
 
-    storage = info.files()
-    files_list = []
-    for i in range(storage.num_files()):
-        files_list.append({
-            "path": storage.file_path(i),
-            "size": storage.file_size(i)
-        })
+              for tr in trackers:
+                  magnet += "&tr=" + urllib.parse.quote(tr)
 
-    data = {
-        "torrent_file": path,
-        "name": name,
-        "info_hash": infohash,
-        "total_size": info.total_size(),
-        "num_files": storage.num_files(),
-        "trackers": trackers,
-        "magnet_link": magnet,
-        "files": files_list
-    }
+              storage = info.files()
 
-    all_data.append(data)
+              files_list = []
+              for i in range(storage.num_files()):
+                  files_list.append({
+                      "path": storage.file_path(i),
+                      "size": storage.file_size(i)
+                  })
 
-    out_name = "output/magnet_" + os.path.basename(path) + ".json"
-    with open(out_name, "w") as f:
-        json.dump(data, f, indent=2)
+              data = {
+                  "torrent_file": path,
+                  "name": name,
+                  "info_hash": infohash,
+                  "total_size": info.total_size(),
+                  "num_files": storage.num_files(),
+                  "trackers": trackers,
+                  "magnet_link": magnet,
+                  "files": files_list
+              }
 
-if len(all_data) > 1:
-    with open("output/index.json", "w") as f:
-        json.dump(all_data, f, indent=2)
+              all_data.append(data)
 
-print("Processed", len(all_data), "torrents")
-EOF
+              out = "output/magnet_" + os.path.basename(path) + ".json"
+              with open(out, "w") as f:
+                  json.dump(data, f, indent=2)
+
+          if len(all_data) > 1:
+              with open("output/index.json", "w") as f:
+                  json.dump(all_data, f, indent=2)
+
+          print("Processed", len(all_data), "torrents")
+          PY
+
+      - name: Run converter
+        run: python3 convert.py
 
       - name: Create release tag
         id: tag
         run: |
-          TAG="magnet-$(date +'%Y%m%d-%H%M%S')"
+          TAG=magnet-$(date +'%Y%m%d-%H%M%S')
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Publish Release

@@ -1,0 +1,101 @@
+name: Torrent → Magnet Release
+
+on:
+  push:
+    paths:
+      - "**/*.torrent"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-libtorrent
+
+      - name: Convert torrents
+        run: |
+          mkdir -p output
+
+          python3 << 'PY'
+import libtorrent as lt
+import os, json, urllib.parse
+
+torrent_files = []
+for root, dirs, files in os.walk("."):
+    for f in files:
+        if f.endswith(".torrent"):
+            torrent_files.append(os.path.join(root,f))
+
+all_data = []
+
+for path in torrent_files:
+    info = lt.torrent_info(path)
+
+    infohash = str(info.info_hash())
+    name = info.name()
+
+    trackers = [t.url for t in info.trackers()]
+
+    # build magnet with all trackers
+    magnet = "magnet:?xt=urn:btih:" + infohash
+    magnet += "&dn=" + urllib.parse.quote(name)
+
+    for tr in trackers:
+        magnet += "&tr=" + urllib.parse.quote(tr)
+
+    files = []
+    storage = info.files()
+
+    for i in range(storage.num_files()):
+        files.append({
+            "path": storage.file_path(i),
+            "size": storage.file_size(i)
+        })
+
+    data = {
+        "torrent_file": path,
+        "name": name,
+        "info_hash": infohash,
+        "total_size": info.total_size(),
+        "num_files": storage.num_files(),
+        "trackers": trackers,
+        "magnet_link": magnet,
+        "files": files
+    }
+
+    all_data.append(data)
+
+    out_file = "output/magnet_" + os.path.basename(path) + ".json"
+    with open(out_file,"w") as f:
+        json.dump(data,f,indent=2)
+
+# combined index if multiple torrents
+if len(all_data) > 1:
+    with open("output/index.json","w") as f:
+        json.dump(all_data,f,indent=2)
+
+print("Processed",len(all_data),"torrents")
+PY
+
+      - name: Create release tag
+        id: tag
+        run: |
+          TAG="magnet-$(date +'%Y%m%d-%H%M%S')"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Torrent Magnet Links
+          files: output/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
